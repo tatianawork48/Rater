@@ -1,11 +1,43 @@
-import Groq from 'groq-sdk'
+import { GoogleGenerativeAI, type GenerationConfig } from '@google/generative-ai'
 import type { Review } from '@/types'
 
-function getClient() {
-  return new Groq({ apiKey: process.env.GROQ_API_KEY! })
+// ── Google AI Studio (Gemini) client ──────────────────────────────────────────
+// Uses the free-tier Gemini models. Get a key at https://aistudio.google.com/apikey
+// Default model is overridable via GEMINI_MODEL (e.g. gemini-2.5-flash).
+
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+
+function getApiKey(): string {
+  const key =
+    process.env.GOOGLE_AI_STUDIO_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY
+  if (!key) {
+    throw new Error(
+      'GOOGLE_AI_STUDIO_API_KEY (or GEMINI_API_KEY) must be set — get one at https://aistudio.google.com/apikey'
+    )
+  }
+  return key
 }
 
-const MODEL = 'llama-3.3-70b-versatile'
+let _genAI: GoogleGenerativeAI | null = null
+function getGenAI(): GoogleGenerativeAI {
+  if (!_genAI) _genAI = new GoogleGenerativeAI(getApiKey())
+  return _genAI
+}
+
+const MODEL_IS_THINKING =
+  /2\.5|gemini-3|thinking/i.test(MODEL)
+
+// gemini-2.5 / 3.x models enable "thinking" by default, which silently consumes
+// the output-token budget — long prompts hit MAX_TOKENS before any answer text
+// is produced, truncating JSON and yielding empty results. These tasks are short
+// and structured, so disable thinking. The field isn't in the SDK's typed
+// GenerationConfig yet but the REST API accepts it, hence the cast.
+function genConfig(cfg: GenerationConfig): GenerationConfig {
+  if (!MODEL_IS_THINKING) return cfg
+  return { ...cfg, thinkingConfig: { thinkingBudget: 0 } } as GenerationConfig
+}
 
 // Compatibility wrapper so callers (red-flags, compare routes) that do
 // `llm.invoke([new HumanMessage(prompt)])` need zero changes.
@@ -14,25 +46,35 @@ class LLMCompat {
   async invoke(
     messages: Array<{ _getType(): string; content: string | unknown[] }>
   ): Promise<{ content: string }> {
-    const mapped: Groq.Chat.ChatCompletionMessageParam[] = messages.map((m) => {
+    // Gemini takes a single system instruction plus a turn-based contents array.
+    let systemInstruction: string | undefined
+    const contents: { role: 'user' | 'model'; parts: { text: string }[] }[] = []
+
+    for (const m of messages) {
       const t = m._getType()
-      const role =
-        t === 'human' ? 'user' as const
-        : t === 'ai'  ? 'assistant' as const
-        :               'system' as const
-      const content =
+      const text =
         typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-      return { role, content }
-    })
+      if (t === 'system') {
+        systemInstruction = systemInstruction ? `${systemInstruction}\n${text}` : text
+      } else {
+        contents.push({
+          role: t === 'ai' ? 'model' : 'user',
+          parts: [{ text }],
+        })
+      }
+    }
 
-    const res = await getClient().chat.completions.create({
+    const model = getGenAI().getGenerativeModel({
       model: MODEL,
-      messages: mapped,
-      max_tokens: 1024,
-      temperature: 0.7,
+      ...(systemInstruction ? { systemInstruction } : {}),
     })
 
-    return { content: res.choices[0]?.message?.content ?? '' }
+    const res = await model.generateContent({
+      contents,
+      generationConfig: genConfig({ maxOutputTokens: 1024, temperature: 0.7 }),
+    })
+
+    return { content: res.response.text() }
   }
 }
 
@@ -95,23 +137,30 @@ Formatting guidelines:
 - Keep responses concise but informative
 - Always cite the verified review count when making rating claims`
 
-  const messages: Groq.Chat.ChatCompletionMessageParam[] = [
-    { role: 'system', content: systemPrompt },
-    ...history.map((m) => ({ role: m.role, content: m.content })),
-    { role: 'user', content: userMessage },
-  ]
+  // Gemini requires the chat history to begin with a 'user' turn (the system
+  // prompt is passed separately as systemInstruction). The UI seeds an assistant
+  // greeting, so drop any leading 'model' turns before handing history to Gemini.
+  const geminiHistory = history.map((m) => ({
+    role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
+    parts: [{ text: m.content }],
+  }))
+  while (geminiHistory.length > 0 && geminiHistory[0].role === 'model') {
+    geminiHistory.shift()
+  }
 
   try {
-    const res = await getClient().chat.completions.create({
+    const model = getGenAI().getGenerativeModel({
       model: MODEL,
-      messages,
-      max_tokens: 1024,
-      temperature: 0.7,
+      systemInstruction: systemPrompt,
     })
-    const text = res.choices[0]?.message?.content ?? ''
-    return text
+    const chat = model.startChat({
+      history: geminiHistory,
+      generationConfig: genConfig({ maxOutputTokens: 1024, temperature: 0.7 }),
+    })
+    const res = await chat.sendMessage(userMessage)
+    return res.response.text()
   } catch (err) {
-    console.error('Groq error:', err)
+    console.error('Gemini error:', err)
     throw new Error('AI chat service unavailable. Please try again.')
   }
 }
@@ -133,13 +182,12 @@ Reviews: ${JSON.stringify(companyReviews.map((r) => ({ rating: r.rating, title: 
 Respond with only: positive, neutral, or negative`
 
   try {
-    const res = await getClient().chat.completions.create({
-      model: MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 10,
-      temperature: 0,
+    const model = getGenAI().getGenerativeModel({ model: MODEL })
+    const res = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: genConfig({ maxOutputTokens: 10, temperature: 0 }),
     })
-    const result = (res.choices[0]?.message?.content ?? '').trim().toLowerCase()
+    const result = res.response.text().trim().toLowerCase()
     if (['positive', 'neutral', 'negative'].includes(result)) return result
     return 'neutral'
   } catch {

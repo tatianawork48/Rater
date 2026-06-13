@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { Send, Bot, User, Sparkles, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
 import type { ChatMessage } from '@/types'
+import MarkdownMessage from './MarkdownMessage'
 
 export default function ChatInterface() {
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -164,7 +165,11 @@ export default function ChatInterface() {
                   : 'bg-brand-purple/20 border border-brand-purple/30 text-text-primary rounded-tr-sm'
               )}
             >
-              <div className="whitespace-pre-wrap">{msg.content}</div>
+              {msg.role === 'assistant' ? (
+                <MarkdownMessage content={msg.content} />
+              ) : (
+                <div className="whitespace-pre-wrap">{msg.content}</div>
+              )}
             </div>
           </div>
         ))}
