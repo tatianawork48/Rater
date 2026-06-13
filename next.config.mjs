@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
-    serverComponentsExternalPackages: ['@hashgraph/sdk', 'hedera-agent-kit'],
+    serverComponentsExternalPackages: ['@hashgraph/sdk', 'hedera-agent-kit', '@hiero-ledger/proto', 'protobufjs'],
   },
   webpack: (config, { isServer }) => {
     if (!isServer) {
@@ -19,9 +19,9 @@ const nextConfig = {
     config.externals.push({
       'utf-8-validate': 'commonjs utf-8-validate',
       bufferutil: 'commonjs bufferutil',
+      'protobufjs/minimal.js': 'commonjs protobufjs/minimal.js',
     })
     return config
   },
 }
-
 export default nextConfig
