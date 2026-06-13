@@ -2,14 +2,13 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Shield, MessageSquare, PlusCircle, Zap, CheckCircle2 } from 'lucide-react'
+import { Shield, MessageSquare, PlusCircle, Zap } from 'lucide-react'
 import clsx from 'clsx'
 
 const links = [
   { href: '/',        label: 'Feed',         icon: Shield },
   { href: '/submit',  label: 'Write Review', icon: PlusCircle },
   { href: '/chat',    label: 'AI Chat',      icon: MessageSquare },
-  { href: '/verify',  label: 'Verify',       icon: CheckCircle2 },
 ]
 
 export default function Navbar() {

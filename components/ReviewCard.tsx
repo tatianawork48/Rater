@@ -47,7 +47,8 @@ export default function ReviewCard({ review, compact = false }: ReviewCardProps)
     : review.rating >= 2.5 ? 'text-rating-gold'
     : 'text-status-error'
 
-  const isDemoTx = !review.hcsTxId || review.hcsTxId.includes('seed') || review.hcsTxId.startsWith('failed')
+  // Real Hedera tx IDs have format <account>@<seconds>.<nanoseconds> (both all-digit segments)
+  const isDemoTx = !review.hcsTxId || !/^\d+$/.test((review.hcsTxId.split('@')[1] ?? '').split('.')[0])
   const wwa = review.categoryRatings?.wouldWorkAgain
 
   return (
@@ -174,14 +175,6 @@ export default function ReviewCard({ review, compact = false }: ReviewCardProps)
               <ExternalLink className="w-3 h-3" />
               HashScan
             </a>
-          )}
-          {review.hcsSequenceNumber && (
-            <Link
-              href={`/verify?seq=${review.hcsSequenceNumber}`}
-              className="text-xs text-text-muted hover:text-brand-cyan transition-colors"
-            >
-              Verify #{review.hcsSequenceNumber}
-            </Link>
           )}
           {review.nftSerial && (
             <span className="text-xs text-brand-purple-light bg-brand-purple/10 border border-brand-purple/20 px-1.5 py-0.5 rounded-md">
